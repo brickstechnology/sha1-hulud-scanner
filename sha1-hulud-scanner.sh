@@ -1,6 +1,6 @@
 #!/bin/bash
 # SHA1-HULUD Scanner - Complete version with 350+ packages
-# Scans a Node.js project to detect compromised packages
+# Scans a Node.js project (or nested projects) to detect compromised packages
 
 set -e
 
@@ -20,18 +20,49 @@ FALSE_POSITIVES=(
   "sha.js"
 )
 
+# Options
+RECURSIVE=false
+
 # Show help
 show_help() {
-  echo "Usage: $0 <project_directory>"
+  echo "Usage: $0 [options] <project_directory>"
   echo ""
   echo "Scans a Node.js project to detect packages compromised by SHA1-HULUD pt 2"
   echo ""
+  echo "Options:"
+  echo "  -r, --recursive    Scan all nested Node.js projects in the directory"
+  echo "  -h, --help         Show this help message"
+  echo ""
   echo "Example:"
   echo "  $0 /path/to/project"
-  echo "  $0 ~/Projects/my-project"
+  echo "  $0 -r ~/Projects/monorepo"
+  echo "  $0 --recursive /path/to/workspace"
   echo ""
   echo "The script uses sha1-hulud-packages.txt file (288+ packages)"
 }
+
+# Parse options
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -r|--recursive)
+      RECURSIVE=true
+      shift
+      ;;
+    -h|--help)
+      show_help
+      exit 0
+      ;;
+    -*)
+      echo -e "${RED}❌ Error: Unknown option '$1'${NC}"
+      echo ""
+      show_help
+      exit 1
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
 
 # Check if argument provided
 if [ $# -eq 0 ]; then
@@ -41,17 +72,11 @@ if [ $# -eq 0 ]; then
   exit 1
 fi
 
-PROJECT_DIR="$1"
+ROOT_DIR="$1"
 
 # Check if directory exists
-if [ ! -d "$PROJECT_DIR" ]; then
-  echo -e "${RED}❌ Error: Directory '$PROJECT_DIR' does not exist${NC}"
-  exit 1
-fi
-
-# Check if it's a Node.js project
-if [ ! -f "$PROJECT_DIR/package.json" ]; then
-  echo -e "${RED}❌ Error: No package.json found in '$PROJECT_DIR'${NC}"
+if [ ! -d "$ROOT_DIR" ]; then
+  echo -e "${RED}❌ Error: Directory '$ROOT_DIR' does not exist${NC}"
   exit 1
 fi
 
@@ -75,38 +100,48 @@ while IFS= read -r line; do
   COMPROMISED_PACKAGES+=("$line")
 done < "$PACKAGES_FILE"
 
-echo ""
-echo "🔍 SHA1-HULUD Scanner v2.1"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "📁 Project: $PROJECT_DIR"
-echo "📋 ${#COMPROMISED_PACKAGES[@]} packages to scan"
-echo "📋 ${#FALSE_POSITIVES[@]} known false positives to exclude"
-echo ""
+# Global counters (across all projects)
+GLOBAL_FOUND=0
+GLOBAL_FOUND_PACKAGES=()
+PROJECTS_SCANNED=0
+COMPROMISED_PROJECTS=()
 
-# Counters
+# Current project counters (reset per project)
 FOUND=0
 FOUND_PACKAGES=()
 TOTAL_CHECKS=0
+PROJECT_DIR=""
 
 # Scan direct dependencies
 scan_package_json() {
-  echo "🔎 [1/4] Scanning direct dependencies (package.json)..."
+  local pkg_count=${#COMPROMISED_PACKAGES[@]}
+  echo -e "🔎 [1/4] Scanning direct dependencies (package.json)... ${BLUE}[0/$pkg_count]${NC}\r\c"
 
   if [ ! -f "$PROJECT_DIR/package.json" ]; then
+    echo ""
     return
   fi
 
+  local i=0
   for package in "${COMPROMISED_PACKAGES[@]}"; do
+    i=$((i + 1))
     TOTAL_CHECKS=$((TOTAL_CHECKS + 1))
+
+    # Update progress every 50 packages
+    if [ $((i % 50)) -eq 0 ] || [ $i -eq $pkg_count ]; then
+      echo -e "🔎 [1/4] Scanning direct dependencies (package.json)... ${BLUE}[$i/$pkg_count]${NC}\r\c"
+    fi
 
     # Search in dependencies and devDependencies
     if grep -q "\"$package\"" "$PROJECT_DIR/package.json" 2>/dev/null; then
+      echo ""
       echo -e "  ${RED}⚠️  FOUND: $package in package.json${NC}"
       FOUND=$((FOUND + 1))
       FOUND_PACKAGES+=("$package (direct)")
     fi
   done
 
+  echo ""
   if [ $FOUND -eq 0 ]; then
     echo -e "  ${GREEN}✓ No compromised packages in direct dependencies${NC}"
   fi
@@ -114,22 +149,32 @@ scan_package_json() {
 
 # Scan node_modules
 scan_node_modules() {
+  local pkg_count=${#COMPROMISED_PACKAGES[@]}
   echo ""
-  echo "🔎 [2/4] Scanning node_modules (transitive)..."
+  echo -e "🔎 [2/4] Scanning node_modules (transitive)... ${BLUE}[0/$pkg_count]${NC}\r\c"
 
   if [ ! -d "$PROJECT_DIR/node_modules" ]; then
+    echo ""
     echo -e "  ${YELLOW}⚠️  node_modules not found (run 'npm install' first)${NC}"
     return
   fi
 
   local found_in_modules=0
+  local i=0
 
   for package in "${COMPROMISED_PACKAGES[@]}"; do
+    i=$((i + 1))
     TOTAL_CHECKS=$((TOTAL_CHECKS + 1))
+
+    # Update progress every 50 packages
+    if [ $((i % 50)) -eq 0 ] || [ $i -eq $pkg_count ]; then
+      echo -e "🔎 [2/4] Scanning node_modules (transitive)... ${BLUE}[$i/$pkg_count]${NC}\r\c"
+    fi
 
     # For scoped packages (@xxx/), search exact folder
     if [[ "$package" == @*/* ]]; then
       if [ -d "$PROJECT_DIR/node_modules/$package" ]; then
+        echo ""
         echo -e "  ${RED}🚨 FOUND: $package installed${NC}"
         FOUND=$((FOUND + 1))
         FOUND_PACKAGES+=("$package (transitive)")
@@ -138,6 +183,7 @@ scan_node_modules() {
     else
       # For non-scoped packages
       if [ -d "$PROJECT_DIR/node_modules/$package" ]; then
+        echo ""
         echo -e "  ${RED}🚨 FOUND: $package installed${NC}"
         FOUND=$((FOUND + 1))
         FOUND_PACKAGES+=("$package (transitive)")
@@ -146,6 +192,7 @@ scan_node_modules() {
     fi
   done
 
+  echo ""
   if [ $found_in_modules -eq 0 ]; then
     echo -e "  ${GREEN}✓ No compromised packages installed${NC}"
   fi
@@ -153,61 +200,91 @@ scan_node_modules() {
 
 # Scan lockfiles
 scan_lockfiles() {
+  local pkg_count=${#COMPROMISED_PACKAGES[@]}
   echo ""
   echo "🔎 [3/4] Scanning lockfiles..."
 
   local found_in_locks=0
+  local i=0
 
   # package-lock.json
   if [ -f "$PROJECT_DIR/package-lock.json" ]; then
-    echo "  📄 Scanning package-lock.json..."
+    i=0
+    echo -e "  📄 Scanning package-lock.json... ${BLUE}[0/$pkg_count]${NC}\r\c"
     for package in "${COMPROMISED_PACKAGES[@]}"; do
+      i=$((i + 1))
+      if [ $((i % 50)) -eq 0 ] || [ $i -eq $pkg_count ]; then
+        echo -e "  📄 Scanning package-lock.json... ${BLUE}[$i/$pkg_count]${NC}\r\c"
+      fi
       if grep -q "\"$package\"" "$PROJECT_DIR/package-lock.json" 2>/dev/null; then
+        echo ""
         echo -e "    ${RED}⚠️  FOUND: $package${NC}"
         FOUND=$((FOUND + 1))
         FOUND_PACKAGES+=("$package (lockfile)")
         found_in_locks=$((found_in_locks + 1))
       fi
     done
+    echo ""
   fi
 
   # yarn.lock
   if [ -f "$PROJECT_DIR/yarn.lock" ]; then
-    echo "  📄 Scanning yarn.lock..."
+    i=0
+    echo -e "  📄 Scanning yarn.lock... ${BLUE}[0/$pkg_count]${NC}\r\c"
     for package in "${COMPROMISED_PACKAGES[@]}"; do
+      i=$((i + 1))
+      if [ $((i % 50)) -eq 0 ] || [ $i -eq $pkg_count ]; then
+        echo -e "  📄 Scanning yarn.lock... ${BLUE}[$i/$pkg_count]${NC}\r\c"
+      fi
       if grep -q "$package@" "$PROJECT_DIR/yarn.lock" 2>/dev/null; then
+        echo ""
         echo -e "    ${RED}⚠️  FOUND: $package${NC}"
         FOUND=$((FOUND + 1))
         FOUND_PACKAGES+=("$package (lockfile)")
         found_in_locks=$((found_in_locks + 1))
       fi
     done
+    echo ""
   fi
 
   # bun.lock (binary file - use strings)
   if [ -f "$PROJECT_DIR/bun.lock" ]; then
-    echo "  📄 Scanning bun.lock..."
+    i=0
+    echo -e "  📄 Scanning bun.lock... ${BLUE}[0/$pkg_count]${NC}\r\c"
     for package in "${COMPROMISED_PACKAGES[@]}"; do
+      i=$((i + 1))
+      if [ $((i % 50)) -eq 0 ] || [ $i -eq $pkg_count ]; then
+        echo -e "  📄 Scanning bun.lock... ${BLUE}[$i/$pkg_count]${NC}\r\c"
+      fi
       if strings "$PROJECT_DIR/bun.lock" 2>/dev/null | grep -q "$package"; then
+        echo ""
         echo -e "    ${RED}⚠️  FOUND: $package${NC}"
         FOUND=$((FOUND + 1))
         FOUND_PACKAGES+=("$package (lockfile)")
         found_in_locks=$((found_in_locks + 1))
       fi
     done
+    echo ""
   fi
 
   # pnpm-lock.yaml
   if [ -f "$PROJECT_DIR/pnpm-lock.yaml" ]; then
-    echo "  📄 Scanning pnpm-lock.yaml..."
+    i=0
+    echo -e "  📄 Scanning pnpm-lock.yaml... ${BLUE}[0/$pkg_count]${NC}\r\c"
     for package in "${COMPROMISED_PACKAGES[@]}"; do
+      i=$((i + 1))
+      if [ $((i % 50)) -eq 0 ] || [ $i -eq $pkg_count ]; then
+        echo -e "  📄 Scanning pnpm-lock.yaml... ${BLUE}[$i/$pkg_count]${NC}\r\c"
+      fi
       if grep -q "$package" "$PROJECT_DIR/pnpm-lock.yaml" 2>/dev/null; then
+        echo ""
         echo -e "    ${RED}⚠️  FOUND: $package${NC}"
         FOUND=$((FOUND + 1))
         FOUND_PACKAGES+=("$package (lockfile)")
         found_in_locks=$((found_in_locks + 1))
       fi
     done
+    echo ""
   fi
 
   if [ $found_in_locks -eq 0 ]; then
@@ -331,31 +408,143 @@ scan_sha1_markers() {
   fi
 }
 
-# Run scans
-scan_package_json
-scan_node_modules
-scan_lockfiles
-scan_sha1_markers
+# Scan a single project directory
+scan_project() {
+  PROJECT_DIR="$1"
+  local project_num="$2"
+  local total_projects="$3"
+  
+  # Reset per-project counters
+  FOUND=0
+  FOUND_PACKAGES=()
+  TOTAL_CHECKS=0
+  
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  if [ -n "$project_num" ] && [ -n "$total_projects" ]; then
+    echo -e "📁 ${BLUE}[$project_num/$total_projects]${NC} Scanning: $PROJECT_DIR"
+  else
+    echo "📁 Scanning: $PROJECT_DIR"
+  fi
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  
+  # Run scans
+  scan_package_json
+  scan_node_modules
+  scan_lockfiles
+  scan_sha1_markers
+  
+  PROJECTS_SCANNED=$((PROJECTS_SCANNED + 1))
+  
+  # Add to global results
+  if [ $FOUND -gt 0 ]; then
+    GLOBAL_FOUND=$((GLOBAL_FOUND + FOUND))
+    COMPROMISED_PROJECTS+=("$PROJECT_DIR")
+    for pkg in "${FOUND_PACKAGES[@]}"; do
+      GLOBAL_FOUND_PACKAGES+=("$PROJECT_DIR: $pkg")
+    done
+  fi
+  
+  # Per-project result
+  echo ""
+  if [ $FOUND -eq 0 ]; then
+    echo -e "  ${GREEN}✓ Project clean${NC}"
+  else
+    echo -e "  ${RED}⚠️  $FOUND issue(s) found in this project${NC}"
+  fi
+}
 
+# Find all Node.js projects in a directory
+find_projects() {
+  local search_dir="$1"
+  
+  # Find all package.json files, excluding node_modules
+  find "$search_dir" -name "package.json" -type f \
+    ! -path "*/node_modules/*" \
+    ! -path "*/.git/*" \
+    2>/dev/null | while read -r pkg_json; do
+    dirname "$pkg_json"
+  done
+}
+
+# Print header
+echo ""
+echo "🔍 SHA1-HULUD Scanner v2.2"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "📂 Root: $ROOT_DIR"
+echo "🔄 Recursive mode: $RECURSIVE"
+echo "📋 ${#COMPROMISED_PACKAGES[@]} packages to check"
+echo "📋 ${#FALSE_POSITIVES[@]} known false positives to exclude"
+
+# Main scanning logic
+if [ "$RECURSIVE" = true ]; then
+  # Recursive mode: find and scan all projects
+  echo ""
+  echo "🔎 Finding Node.js projects..."
+  
+  # Collect projects into array
+  PROJECTS=()
+  while IFS= read -r project; do
+    [ -n "$project" ] && PROJECTS+=("$project")
+  done < <(find_projects "$ROOT_DIR")
+  
+  if [ ${#PROJECTS[@]} -eq 0 ]; then
+    echo -e "${YELLOW}⚠️  No Node.js projects found in '$ROOT_DIR'${NC}"
+    exit 0
+  fi
+  
+  TOTAL_PROJECTS=${#PROJECTS[@]}
+  echo "📦 Found $TOTAL_PROJECTS project(s)"
+  
+  # Scan each project with progress
+  PROJECT_NUM=0
+  for project in "${PROJECTS[@]}"; do
+    PROJECT_NUM=$((PROJECT_NUM + 1))
+    scan_project "$project" "$PROJECT_NUM" "$TOTAL_PROJECTS"
+  done
+else
+  # Single project mode
+  if [ ! -f "$ROOT_DIR/package.json" ]; then
+    echo -e "${RED}❌ Error: No package.json found in '$ROOT_DIR'${NC}"
+    echo ""
+    echo "Tip: Use -r or --recursive to scan for nested projects"
+    exit 1
+  fi
+  
+  scan_project "$ROOT_DIR" "1" "1"
+fi
+
+# Final summary
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "📊 SCAN SUMMARY"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-# Final result
-if [ $FOUND -eq 0 ]; then
+if [ $GLOBAL_FOUND -eq 0 ]; then
   echo -e "${GREEN}✅ NO COMPROMISE DETECTED${NC}"
   echo ""
-  echo "Your project is clean — no SHA1-HULUD packages found."
+  echo "All projects are clean — no SHA1-HULUD packages found."
   echo ""
   echo "📊 Statistics:"
-  echo "   • ${#COMPROMISED_PACKAGES[@]} packages scanned"
+  echo "   • $PROJECTS_SCANNED project(s) scanned"
+  echo "   • ${#COMPROMISED_PACKAGES[@]} packages checked per project"
   echo "   • 0 compromised packages"
   echo ""
   exit 0
 else
-  echo -e "${RED}🚨 $FOUND COMPROMISED PACKAGE(S) DETECTED${NC}"
+  echo -e "${RED}🚨 $GLOBAL_FOUND COMPROMISED PACKAGE(S) DETECTED${NC}"
+  echo ""
+  echo "📊 Statistics:"
+  echo "   • $PROJECTS_SCANNED project(s) scanned"
+  echo "   • ${#COMPROMISED_PROJECTS[@]} project(s) compromised"
+  echo ""
+  echo "📦 Affected projects:"
+  for proj in "${COMPROMISED_PROJECTS[@]}"; do
+    echo "   • $proj"
+  done
   echo ""
   echo "📦 Packages found:"
-  for pkg in "${FOUND_PACKAGES[@]}"; do
+  for pkg in "${GLOBAL_FOUND_PACKAGES[@]}"; do
     echo "   • $pkg"
   done
   echo ""

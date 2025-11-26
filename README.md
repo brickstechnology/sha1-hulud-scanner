@@ -18,6 +18,7 @@ SHA1-HULUD pt 2 is a supply chain attack targeting 288+ npm packages including:
 ## ✨ Features
 
 - ✅ Scans **288+ compromised packages** from SHA1-HULUD pt 2
+- ✅ **Recursive scanning** for monorepos and nested projects
 - ✅ Multi-package manager support: **npm**, **yarn**, **bun**, **pnpm**
 - ✅ 4-stage scanning:
   - Direct dependencies (`package.json`)
@@ -39,31 +40,50 @@ chmod +x sha1-hulud-scanner.sh
 ## 🚀 Usage
 
 ```bash
-./sha1-hulud-scanner.sh <project_directory>
+./sha1-hulud-scanner.sh [options] <project_directory>
 ```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `-r, --recursive` | Scan all nested Node.js projects in the directory |
+| `-h, --help` | Show help message |
 
 ### Examples
 
 ```bash
-# Scan a local project
+# Scan a single project
 ./sha1-hulud-scanner.sh /path/to/your/project
 
-# Scan relative path
-./sha1-hulud-scanner.sh ~/Projects/my-app
+# Scan a monorepo (all nested projects)
+./sha1-hulud-scanner.sh -r /path/to/monorepo
+
+# Scan all projects in a workspace
+./sha1-hulud-scanner.sh --recursive ~/Projects
 
 # Scan current directory
 ./sha1-hulud-scanner.sh .
+
+# Scan all projects in current directory
+./sha1-hulud-scanner.sh -r .
 ```
 
 ## 📊 Output Example
 
+### Single Project Scan
+
 ```
-🔍 SHA1-HULUD Scanner v2.1
+🔍 SHA1-HULUD Scanner v2.2
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📁 Project: /path/to/project
-📋 288 packages to scan
+📂 Root: /path/to/project
+🔄 Recursive mode: false
+📋 288 packages to check
 📋 5 known false positives to exclude
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📁 Scanning: /path/to/project
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🔎 [1/4] Scanning direct dependencies (package.json)...
   ✓ No compromised packages in direct dependencies
 
@@ -74,17 +94,60 @@ chmod +x sha1-hulud-scanner.sh
   ✓ No compromised packages in lockfiles
 
 🔎 [4/4] Scanning for SHA1-HULUD markers...
-  📄 Checking packages with 'sha1' in name (bun.lock):
-    ℹ️  @aws-crypto/sha1-browser (legitimate package - skipped)
-  ✓ No suspicious SHA1 markers (1 legitimate packages excluded)
+  ✓ No SHA1-HULUD markers detected
 
+  ✓ Project clean
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 SCAN SUMMARY
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ✅ NO COMPROMISE DETECTED
 
-Your project is clean — no SHA1-HULUD packages found.
+All projects are clean — no SHA1-HULUD packages found.
 
 📊 Statistics:
-   • 288 packages scanned
+   • 1 project(s) scanned
+   • 288 packages checked per project
+   • 0 compromised packages
+```
+
+### Recursive Scan (Monorepo)
+
+```
+🔍 SHA1-HULUD Scanner v2.2
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📂 Root: /path/to/monorepo
+🔄 Recursive mode: true
+📋 288 packages to check
+📋 5 known false positives to exclude
+
+🔎 Finding Node.js projects...
+📦 Found 5 project(s)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📁 Scanning: /path/to/monorepo
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+... (scan output) ...
+  ✓ Project clean
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📁 Scanning: /path/to/monorepo/packages/app
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+... (scan output) ...
+  ✓ Project clean
+
+... (more projects) ...
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 SCAN SUMMARY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ NO COMPROMISE DETECTED
+
+All projects are clean — no SHA1-HULUD packages found.
+
+📊 Statistics:
+   • 5 project(s) scanned
+   • 288 packages checked per project
    • 0 compromised packages
 ```
 
@@ -153,6 +216,10 @@ Contributions are welcome! Please:
 2. Create a feature branch
 3. Submit a pull request
 
+## 🙏 Acknowledgments
+
+This project is based on the original [sha1-hulud-scanner](https://github.com/standujar/sha1-hulud-scanner) by [@standujar](https://github.com/standujar). Thank you for creating and sharing this essential security tool!
+
 ## 📜 License
 
 MIT License - Feel free to use this scanner to protect your projects.
@@ -169,7 +236,12 @@ MIT License - Feel free to use this scanner to protect your projects.
 git clone https://github.com/standujar/sha1-hulud-scanner.git
 cd sha1-hulud-scanner
 chmod +x sha1-hulud-scanner.sh
+
+# Scan a single project
 ./sha1-hulud-scanner.sh /path/to/your/project
+
+# Scan all projects in a monorepo/workspace
+./sha1-hulud-scanner.sh -r /path/to/monorepo
 ```
 
 ---
